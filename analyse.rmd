@@ -1,0 +1,96 @@
+Evaluation de performances de Tabarnac
+======================================
+
+TODO blabla
+
+```{r parsing ,echo=F}
+library(ggplot2)
+library(plyr)
+data<-data.frame(read.csv2(file="results.csv",sep=',',dec='.'))
+#str(data)
+#show(data)
+```
+
+Expectations
+------------
+
+For the naive algorithm, kmaf, interleave and tabarnac should give almost the
+same result, as the only thing that we can do is interleave.
+
+For the bloc version, Tabarnac should be better than the others as it is
+does a really precise mapping without overhead. Kmaf should be better than
+interleave and base but not from much.
+
+The best speedup should be better for bloc as its designe is more numa aware.
+
+Results
+-------
+
+###   Execution time
+
+```{r ExecTime, echo=F}
+stat<-ddply(data,c("Algo","Opti"),summarise,
+            N=length(Time),mean=mean(Time),sd=sd(Time),se=sd/sqrt(N))
+p<-ggplot(stat,aes(x=Algo,y=mean, fill=Opti))
+p  <-  p + geom_bar(stat="identity", position=position_dodge(.9) )
+p  <-  p + geom_errorbar(aes(ymin=mean-se, ymax=mean+se),
+                  width=.2,                    # Width of the error bars
+                  position=position_dodge(.9))
+p <- p + xlab("Algorithm")
+p <- p + ylab("Time (ms)")
+p <- p + ggtitle("Execution time of matrix multiplication")
+p <- p + guides(fill=guide_legend(title="Policy"))
+# BW theme
+p <- p + theme_bw()
+p <-  p + theme(panel.grid.minor = element_line(colour = "black", linetype="dashed", size = 0.1),
+        panel.grid.major = element_line(colour = "black", size = 0.1))
+p <- p + scale_fill_grey()
+#p <- p+ theme(legend.position="none")
+show(p)
+ggsave("figure/ExecutionTime.pdf", width=10, height=10)
+```
+
+Detailled Values:
+
+```{r DetailledValues, echo=F}
+show(stat)
+```
+
+### SpeedUp
+
+```{r Speedup, echo=F}
+
+speedup <- c("Bloc", as.character(stat[which.min(subset(stat, stat$Algo=="Bloc")$mean),]$Opti),
+             stat[stat$Opti=="Base" & stat$Algo=="Bloc",]$mean
+             / min(subset(stat, stat$Algo=="Bloc")$mean))
+speedup <- rbind(speedup, c("Naif", as.character(stat[which.min(subset(stat, stat$Algo=="Naif")$mean),]$Opti),
+                stat[stat$Opti=="Base" & stat$Algo=="Naif",]$mean
+                / min(subset(stat, stat$Algo=="Naif")$mean)))
+speedup <- data.frame(speedup)
+colnames(speedup) <- c("Algo",  "Opti", "Val")
+p<-ggplot(speedup,aes(x=Algo,y=Val, fill=Opti))
+p  <-  p + geom_bar(stat="identity", position=position_dodge(.9) )
+p <- p + xlab("Algorithm")
+p <- p + ylab("Best SpeedUp")
+p <- p + ggtitle("Best Speedup for matrix multiplications")
+# BW theme
+p <- p + guides(fill=guide_legend(title="Policy"))
+p <- p + theme_bw()
+p <-  p + theme(panel.grid.minor = element_line(colour = "black", linetype="dashed", size = 0.1),
+        panel.grid.major = element_line(colour = "black", size = 0.1))
+p <- p + scale_fill_grey() #breaks=c(4,2))
+show(p)
+ggsave("figure/speedup.pdf", width=10, height=10)
+```
+
+Conclusions
+-----------
+
+**TODO**
+
+```{r free, echo=F}
+remove(p)
+remove(stat)
+remove(data)
+remove(speedup)
+```
