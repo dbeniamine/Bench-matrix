@@ -305,11 +305,9 @@ void do_mult_par_bloc(double *Res)
 
 void* do_mult_par_modulo_thread(void *arg)
 {
-    double *Res=((th_args)arg)->mat;
-    int tid=((th_args) arg)->tid, nth=Nthreads;
+    //double *Res=((th_args)arg)->mat;
+    int tid=((th_args) arg)->tid;
     printf("thread %d alive  pid %d tid %ld !\n", tid, getpid(), syscall(SYS_gettid));
-    if(numa)
-        numa_run_on_node(args->tid);
     //Very unefficient parallel matrix multplication
     unsigned int ligr=0, colr=tid;
     while(ligr*sz+colr<sz*sz)
@@ -318,9 +316,10 @@ void* do_mult_par_modulo_thread(void *arg)
         {
             //Compute
             // Tr: Res[ligr*sz+colr]+=A[ligr*sz+k]*BT[colr*sz+k];
-            Res[ligr*sz+colr]+=A[ligr*sz+k]*B[k*sz+colr];
+            //Res[ligr*sz+colr]+=A[ligr*sz+k]*B[k*sz+colr];
+            C[ligr*sz+colr]+=A[ligr*sz+k]*B[k*sz+colr];
         }
-        colr+=nth;
+        colr+=Nthreads;
         if(colr>=sz)
         {
             ligr++;

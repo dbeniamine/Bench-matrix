@@ -5,7 +5,8 @@ EXP_NAME=$(basename $0 .sh)
 OUTPUT="exp.log"
 RUN=30
 declare -A TARGET
-CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
+#CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
+CONFIGS=('base' 'Tabarnac' 'numabalance')
 TARGET=([base]="./matrix" [kmaf]="./matrix.x" [Tabarnac]="./matrix"\
     [numabalance]="sysctl kernel.numa_balancing=1 && ./matrix")
 ALGOS=("par_bloc" "par_modulo")

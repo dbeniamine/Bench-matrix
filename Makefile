@@ -15,6 +15,7 @@ all : $(EXEC)
 
 $(EXEC) : $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	cp $(EXEC) $(EXEC).x
 
 .PHONY : clean mrproper
 
@@ -22,4 +23,4 @@ clean :
 	rm -rf *.o
 
 distclean : clean
-	rm -rf $(EXEC)
+	rm -rf $(EXEC) $(EXEC).x
