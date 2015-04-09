@@ -60,16 +60,6 @@ function dumpInfos
     cp -v *.rmd  $EXP_DIR/
     cp -v Makefile  $EXP_DIR/
 }
-#TODO: remove this crap
-declare -A VAL
-VAL=([base]=4 [kmaf]=3  [numactl]=3 [Tabarnac]=2)
-declare -A FACT
-FACT=([par_bloc]=1 [par_modulo]=2)
-function res
-{
-    echo "----------> $(( ${VAL[$1]}*${FACT[$2]} )) (ms)"
-}
-
 if [ $(whoami) != "root" ]
 then
     echo "This script must be run as root"
@@ -134,9 +124,7 @@ do
         sysctl kernel.numa_balancing=0
         testAndExitOnError "can't disable numa balancing"
         echo "${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]}" \
-            > $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
-        #TODO: Remove me
-        res $conf $algo    >> $LOGDIR/$conf.log
+		> $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
         # set +x
         testAndExitOnError "run number $run"
         done
