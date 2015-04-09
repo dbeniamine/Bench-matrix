@@ -65,7 +65,7 @@ then
     echo "This script must be run as root"
     exit 1
 fi
-machinelock
+lockmachine "exp in progress"
 testAndExitOnError "can't lock machine"
 #parsing args
 while getopts "ho:e:r:" opt
@@ -121,8 +121,11 @@ do
         for conf in ${CONFIGS[@]}
         do
         # set -x
-        sysctl kernel.numa_balancing=0
-        testAndExitOnError "can't disable numa balancing"
+	if [ "$(sysctl kernel.numa_balancing=0)" != "kernel.numa_balancing = 0" ]
+	then
+		echo "numa balancing not zero"
+		exit 1
+	fi
         echo "${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]}" \
 		> $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
         # set +x
@@ -139,5 +142,6 @@ echo "thermal_throttle infos :"
 cat /sys/devices/system/cpu/cpu0/thermal_throttle/*
 END_TIME=$(date +%y%m%d_%H%M%S)
 echo "Expe ended at $END_TIME"
-machineunlock
+chown -R david:david $EXP_DIR
+unlockmachine
 
