@@ -30,14 +30,14 @@ Results
 
 ```{r ExecTime, echo=F}
 stat<-ddply(data,c("Algo","Opti"),summarise,
-            N=length(Time),mean=mean(Time),sd=sd(Time),se=sd/sqrt(N))
+            N=length(Time),mean=mean(Time/1000),sd=sd(Time/1000),se=sd/sqrt(N))
 p<-ggplot(stat,aes(x=Algo,y=mean, fill=Opti))
 p  <-  p + geom_bar(stat="identity", position=position_dodge(.9) )
 p  <-  p + geom_errorbar(aes(ymin=mean-se, ymax=mean+se),
                   width=.2,                    # Width of the error bars
                   position=position_dodge(.9))
 p <- p + xlab("Algorithm")
-p <- p + ylab("Time (ms)")
+p <- p + ylab("Time (s)")
 p <- p + ggtitle("Execution time of matrix multiplication")
 p <- p + guides(fill=guide_legend(title="Policy"))
 # BW theme

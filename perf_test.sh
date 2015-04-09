@@ -5,9 +5,9 @@ EXP_NAME=$(basename $0 .sh)
 OUTPUT="exp.log"
 RUN=30
 declare -A TARGET
-CONFIGS=('base' 'kmaf' 'Tabarnac' 'numactl')
+CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
 TARGET=([base]="./matrix" [kmaf]="./matrix.x" [Tabarnac]="./matrix"\
-    [numactl]="numactl -i all ./matrix")
+    [numabalance]="sysctl kernel.numa_balancing=1 && ./matrix")
 ALGOS=("par_bloc" "par_modulo")
 SIZE=4096
 SEED=42
@@ -68,6 +68,14 @@ function res
 {
     echo "----------> $(( ${VAL[$1]}*${FACT[$2]} )) (ms)"
 }
+
+if [ $(whoami) != "root" ]
+then
+    echo "This script must be run as root"
+    exit 1
+fi
+machinelock
+testAndExitOnError "can't lock machine"
 #parsing args
 while getopts "ho:e:r:" opt
 do
@@ -122,6 +130,8 @@ do
         for conf in ${CONFIGS[@]}
         do
         # set -x
+        sysctl kernel.numa_balancing=0
+        testAndExitOnError "can't disable numa balancing"
         echo "${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]}" \
             > $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
         #TODO: Remove me
@@ -140,4 +150,5 @@ echo "thermal_throttle infos :"
 cat /sys/devices/system/cpu/cpu0/thermal_throttle/*
 END_TIME=$(date +%y%m%d_%H%M%S)
 echo "Expe ended at $END_TIME"
+machineunlock
 
