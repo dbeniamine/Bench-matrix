@@ -9,6 +9,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <time.h>
+#include <numa.h>
 /* #include "heapinfo.h" */
 
 #define NAIF 0
@@ -17,6 +18,7 @@
 #define PAR_BLOC 3
 
 double *A,*B,*C,*D, *BT;
+unsigned int  vsplits=0, hsplits=0, numa=0;
 int Nthreads=1;
 size_t sz;
 pthread_t *threads;
@@ -25,6 +27,7 @@ typedef struct th_arg_t
     void *mat;
     unsigned int lrmin, lrmax, colrmin, colrmax;
     int tid;
+    int numanode;
 }*th_args;
 th_args args;
 
@@ -37,6 +40,7 @@ void usage(char *s)
     printf("-v      Turn on verbose mode\n");
     printf("-V      Turn on verifications\n");
     printf("-n nb   Use nb threads, for par_* algorithms\n");
+    printf("-N nb     Use libnuma for mappings on nb numa nodes\n");
     printf("-a algo Use one of the following algorithms:\n");
     printf("        naif, transpose, par_modulo, par_bloc\n");
     printf("        Default is naif\n");
@@ -81,26 +85,73 @@ void do_transpose(void)
     }
 }
 
-void init_matrix(long int seed)
+void do_free(void)
 {
-    srand48(seed);
+    if(numa)
+    {
+        numa_free(A,sizeof(double)*sz*sz);
+        numa_free(B,sizeof(double)*sz*sz);
+        numa_free(C,sizeof(double)*sz*sz);
+    }
+    else
+    {
+        free(A);
+        free(B);
+        free(C);
+    }
+    if(D)
+        free(D);
+    if(BT)
+        free(BT);
+}
 
-    A=(double *)malloc(sizeof(double)*sz*sz);
-    B=(double *)malloc(sizeof(double)*sz*sz);
-    C=(double *)malloc(sizeof(double)*sz*sz);
+void do_malloc(int numa)
+{
+    if(!numa)
+    {
+        A=(double *)malloc(sizeof(double)*sz*sz);
+        B=(double *)malloc(sizeof(double)*sz*sz);
+        C=(double *)malloc(sizeof(double)*sz*sz);
+    } else if(!vsplits)
+    {
+        //Interleave alloc
+        A=(double *)numa_alloc_interleaved(sizeof(double)*sz*sz);
+        B=(double *)numa_alloc_interleaved(sizeof(double)*sz*sz);
+        C=(double *)numa_alloc_interleaved(sizeof(double)*sz*sz);
+    }else
+    {
+        A=(double *)numa_alloc(sizeof(double)*sz*sz);
+        B=(double *)numa_alloc_interleaved(sizeof(double)*sz*sz);
+        C=(double *)numa_alloc(sizeof(double)*sz*sz);
+    }
+    /* printf("A,%lu,%lu\n",(unsigned long)A, sizeof(double)*sz*sz); */
     /* VALGRIND_NAME_STRUCT(A, "A"); */
     /* VALGRIND_NAME_STRUCT(B, "B"); */
     /* VALGRIND_NAME_STRUCT(C, "C"); */
-    if(!A || !B || !C )
-        exit(1);
+}
+
+void do_init_random(void)
+{
     for(unsigned int i=0;i<sz;i++)
     {
         for(unsigned int j=0;j<sz;j++)
         {
             A[i*sz+j]=drand48();
             B[i*sz+j]=drand48();
+            C[i*sz+j]=0;
         }
     }
+}
+
+void init_matrix(long int seed)
+{
+    srand48(seed);
+
+    do_malloc(numa);
+    if(!A || !B || !C )
+        exit(1);
+    if(!vsplits) //Wait for the numa placement before actually init if vsplits are defined
+        do_init_random();
 }
 
 void do_mult(double *Res)
@@ -142,18 +193,23 @@ void *do_mult_par_bloc_thread(void *arg)
 {
     th_args args=(th_args)arg;
     double *Res=args->mat;
-    printf("thread %d alive  pid %d tid %ld !\n", args->tid, getpid(), syscall(SYS_gettid));
-    //    printf("Working on %p from [%d][%d] to [%d][%d]\n", Res, args->lrmin,
-    //            args->colrmin, args->lrmax, args->colrmax);
+    printf("thread %d alive  pid %d tid %ld  on node %d!\n", args->tid, getpid(), syscall(SYS_gettid), args->numanode);
+    //Bind to the good node
+    if(numa)
+        numa_run_on_node(args->numanode);
+
+    /* printf("Working on %p from [%d][%d] to [%d][%d]\n", Res, args->lrmin, */
+    /* args->colrmin, args->lrmax, args->colrmax); */
     for(unsigned int lr=args->lrmin; lr<args->lrmax;lr++)
     {
-        for(unsigned int cr=args->colrmin; cr<args->colrmax;cr++)
+        for(unsigned int k=0;k<sz;k++)
         {
             //         printf("Thread %d computing R[%d][%d]+=A[%d][k]*B[k][%d]\n",
             //                 args->tid, lr,cr,lr,cr);
-            for(unsigned int k=0;k<sz;k++)
+            for(unsigned int cr=args->colrmin; cr<args->colrmax;cr++)
             {
-                Res[lr*sz+cr]+=A[lr*sz+k]*BT[cr*sz+k];
+                /* Tr: Res[lr*sz+cr]+=A[lr*sz+k]*BT[cr*sz+k]; */
+                Res[lr*sz+cr]+=A[lr*sz+k]*B[k*sz+cr];
             }
         }
     }
@@ -174,7 +230,7 @@ int l2(int n)
 //Launch threads for mat mult
 void do_mult_par_bloc(double *Res)
 {
-    do_transpose();
+    /* do_transpose(); */
     threads=malloc(sizeof(pthread_t)*Nthreads);
     void *res;
     for(unsigned int i=0;i<sz*sz;i++)
@@ -183,49 +239,57 @@ void do_mult_par_bloc(double *Res)
     }
     //Split the result matrix
     args=malloc(sizeof(struct th_arg_t)*Nthreads);
-    unsigned int vsplits, hsplits;
-    if(sz%Nthreads!=0)
-    {
-        fprintf(stderr, "%lu%%%d!=0, to lazy to cut this matrix\n",sz, Nthreads);
-        exit(1);
-    }
-    if(Nthreads > 4 && Nthreads%4 == 0)
-    {
-        hsplits=3; //Cut into four pieces
-        vsplits=Nthreads/4-1; // Cut vertically
-    }
-    else if(Nthreads%2==0)
-    {
-        hsplits=Nthreads/2-1;
-        vsplits=1;
-    }
-    else
-    {
-        fprintf(stderr, "To lazy to compute bloc for an odd number of threads\n");
-        exit(1);
-    }
+
     //Do the splits
     unsigned int hblocsz=sz/(hsplits+1), curhbloc=0;
     unsigned int vblocsz=sz/(vsplits+1), curvbloc=0;
+    /* printf("vblocsz: %u hblocsz %u\n", vblocsz, hblocsz); */
+    size_t totalvblocsz=sz*sz/(vsplits+1);
+    unsigned int blocsPerNodes=0;
+    int node=0;
+
+    if(numa)
+    {
+        blocsPerNodes=(vsplits+1)/numa; // 6 splits, numa 2 => 3 blocs per nodes
+        for(unsigned int i=0; i< vsplits+1;++i)
+        {
+            if(i>0 && i%blocsPerNodes==0)
+                ++node;
+            printf("Numa bloc from %lu, offset %lu size %lu, node: %d\n",(long unsigned)A+(i*totalvblocsz),
+                    i*totalvblocsz, totalvblocsz, node);
+            numa_tonode_memory(A+(i*totalvblocsz), i*totalvblocsz,node);
+            printf("Numa bloc from %lu, offset %lu size %lu, node: %d\n",(long unsigned)C+(i*totalvblocsz),
+                    i*totalvblocsz, totalvblocsz, node);
+            numa_tonode_memory(A+(i*totalvblocsz), i*totalvblocsz,node);
+        }
+    }
+    node=0;
     for(int i=0;i<Nthreads;i++)
     {
         args[i].mat=Res;
         args[i].tid=i;
-        args[i].lrmin=curhbloc*hblocsz;
-        args[i].colrmin=curvbloc*vblocsz;
-        args[i].lrmax=(curhbloc+1)*hblocsz;
-        args[i].colrmax=(curvbloc+1)*vblocsz;
+        args[i].lrmin=curvbloc*vblocsz;
+        args[i].colrmin=curhbloc*hblocsz;
+        args[i].lrmax=(curvbloc+1)*vblocsz;
+        args[i].colrmax=(curhbloc+1)*hblocsz;
+        args[i].numanode=node;
+        printf("th %d vbloc %d hbloc %d\n", i, curvbloc, curhbloc);
+
         //Compute on witch bloc will be the next thread
-        if(curhbloc==hsplits)
+        if(curvbloc==vsplits)
         {
-            curvbloc++;
-            curhbloc=0;
+            ++curhbloc;
+            curvbloc=0;
+            node=0;
         }
         else
         {
-            curhbloc++;
+            ++curvbloc;
+            if(blocsPerNodes!=0 && curvbloc%blocsPerNodes==0)
+                ++node;
         }
     }
+    do_init_random();
     //Start all threads
     for(int i=0; i< Nthreads;i++)
     {
@@ -242,8 +306,10 @@ void do_mult_par_bloc(double *Res)
 void* do_mult_par_modulo_thread(void *arg)
 {
     double *Res=((th_args)arg)->mat;
-    int tid=((th_args) arg)->tid;
+    int tid=((th_args) arg)->tid, nth=Nthreads;
     printf("thread %d alive  pid %d tid %ld !\n", tid, getpid(), syscall(SYS_gettid));
+    if(numa)
+        numa_run_on_node(args->tid);
     //Very unefficient parallel matrix multplication
     unsigned int ligr=0, colr=tid;
     while(ligr*sz+colr<sz*sz)
@@ -254,7 +320,7 @@ void* do_mult_par_modulo_thread(void *arg)
             // Tr: Res[ligr*sz+colr]+=A[ligr*sz+k]*BT[colr*sz+k];
             Res[ligr*sz+colr]+=A[ligr*sz+k]*B[k*sz+colr];
         }
-        colr+=Nthreads;
+        colr+=nth;
         if(colr>=sz)
         {
             ligr++;
@@ -301,7 +367,7 @@ int main(int argc, char *argv[])
     //Options
     extern char *optarg;
     printf("Main pid %d\n", getpid());
-    while((opt=getopt(argc, argv, "a:s:S:n:vVh"))!=-1)
+    while((opt=getopt(argc, argv, "a:s:S:n:N:vVh"))!=-1)
     {
         switch(opt)
         {
@@ -323,7 +389,7 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    fprintf(stderr, "Invalid argument '%c' \"%s\"\n", (char)opt,
+                    fprintf(stderr, "Invalid algorithm '%c' \"%s\"\n", (char)opt,
                             optarg);
                     usage(argv[0]);
                     exit(1);
@@ -346,6 +412,9 @@ int main(int argc, char *argv[])
             case 'n':
                 Nthreads=atoi(optarg);
                 printf("using %d threads\n", Nthreads);
+                break;
+            case 'N':
+                numa=atoi(optarg);
                 break;
             case 'h':
                 usage(argv[0]);
@@ -370,6 +439,32 @@ int main(int argc, char *argv[])
                     Nthreads);
             usage(argv[0]);
             exit(1);
+        }
+        if(algo==PAR_BLOC)
+        {
+            //Compute splits
+            if(sz%Nthreads!=0)
+            {
+                fprintf(stderr, "%lu%%%d!=0, to lazy to cut this matrix\n",sz, Nthreads);
+                exit(1);
+            }
+
+            if(Nthreads > 4 && Nthreads%4 == 0)
+            {
+                hsplits=3; //Cut into four pieces
+                vsplits=Nthreads/4-1; // Cut vertically
+            }
+            else if(Nthreads%2==0)
+            {
+                hsplits=Nthreads/2-1;
+                vsplits=1;
+            }
+            else
+            {
+                fprintf(stderr, "To lazy to compute bloc for an odd number of threads (%d)\n", Nthreads);
+                exit(1);
+            }
+            printf("Doing multiplications with %d vsplits and %d hsplits on %d numanodes\n", vsplits, hsplits, numa);
         }
     }else if(Nthreads!=1)
     {
@@ -441,5 +536,7 @@ int main(int argc, char *argv[])
         }
 
     }
+    do_free();
+
     return 0;
 }

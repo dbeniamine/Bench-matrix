@@ -2,11 +2,11 @@ CC=gcc
 DEBUG=yes
 FLAGS=-std=gnu99 -Wall -Wextra -Werror
 ifeq ($(DEBUG),yes)
-	CFLAGS=$(FLAGS) -g
+	CFLAGS=$(FLAGS) -g #-static
 else
 	CFLAGS=$(FLAGS) -O2
 endif
-LDFLAGS=-lpthread -lrt
+LDFLAGS=-lpthread -lrt -lnuma
 OBJ=matrix_naif.c
 EXEC=matrix
 
