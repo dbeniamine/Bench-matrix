@@ -3,12 +3,13 @@ START_TIME=$(date +%y%m%d_%H%M%S)
 CMDLINE="$0 $@"
 EXP_NAME=$(basename $0 .sh)
 OUTPUT="exp.log"
+OWNER=dbeniamine
 RUN=30
 declare -A TARGET
 #CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
 CONFIGS=('base' 'Tabarnac' 'numabalance')
 TARGET=([base]="./matrix" [kmaf]="./matrix.x" [Tabarnac]="./matrix"\
-    [numabalance]="sysctl kernel.numa_balancing=1 && ./matrix")
+    [numabalance]="./matrix")
 ALGOS=("par_bloc" "par_modulo")
 SIZE=4096
 SEED=42
@@ -105,9 +106,7 @@ exec > >(tee $OUTPUT) 2>&1
 dumpInfos
 
 
-cd matrix
-make
-cd -
+make distclean && make
 for run in $(seq 1 $RUN)
 do
     echo "RUN : $run"
@@ -121,12 +120,13 @@ do
         for conf in ${CONFIGS[@]}
         do
         # set -x
-	if [ "$(sysctl kernel.numa_balancing=0)" != "kernel.numa_balancing = 0" ]
+	if [ $conf == "numabalance" ]
 	then
-		echo "numa balancing not zero"
-		exit 1
+		sysctl kernel.numa_balancing=1
+	else
+		sysctl kernel.numa_balancing=0
 	fi
-        echo "${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]}" \
+        ${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]} \
 		> $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
         # set +x
         testAndExitOnError "run number $run"
@@ -142,6 +142,6 @@ echo "thermal_throttle infos :"
 cat /sys/devices/system/cpu/cpu0/thermal_throttle/*
 END_TIME=$(date +%y%m%d_%H%M%S)
 echo "Expe ended at $END_TIME"
-chown -R david:david $EXP_DIR
+chown -R $OWNER:$OWNER $EXP_DIR
 unlockmachine
 
