@@ -11,10 +11,13 @@ OBJ=matrix_naif.c
 EXEC=matrix
 
 
-all : $(EXEC)
+all : $(EXEC).x
 
 $(EXEC) : $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# For kmaf
+$(EXEC).x : $(EXEC)
 	cp $(EXEC) $(EXEC).x
 
 .PHONY : clean mrproper
