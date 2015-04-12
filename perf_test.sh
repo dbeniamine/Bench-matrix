@@ -7,7 +7,7 @@ OWNER=dbeniamine
 RUN=30
 declare -A TARGET
 #CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
-CONFIGS=('base' 'Tabarnac' 'numabalance')
+CONFIGS=('Tabarnac' 'kmaf')
 TARGET=([base]="./matrix" [kmaf]="./matrix.x" [Tabarnac]="./matrix"\
     [numabalance]="./matrix")
 ALGOS=("par_bloc" "par_modulo")

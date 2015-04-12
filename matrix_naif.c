@@ -195,11 +195,11 @@ void *do_mult_par_bloc_thread(void *arg)
     //double *Res=args->mat;
     printf("thread %d alive  pid %d tid %ld  on node \n", args->tid+1, getpid(), syscall(SYS_gettid) );
     //Bind to the good node
-    //if(numa)
-    //{
-    //    numa_run_on_node_mask(args->numanode);
-    //    /* numa_free_nodemask(args->numanode); */
-    //}
+    if(numa)
+    {
+        numa_run_on_node_mask(args->numanode);
+        /* numa_free_nodemask(args->numanode); */
+    }
 
     /* printf("Working on %p from [%d][%d] to [%d][%d]\n", Res, args->lrmin, */
     /* args->colrmin, args->lrmax, args->colrmax); */
@@ -272,21 +272,21 @@ void do_mult_par_bloc(double *Res)
         args[i].lrmax=(curvbloc+1)*vblocsz;
         args[i].colrmax=(curhbloc+1)*hblocsz;
         //Compute numa node
-        //if(numa)
-        //{
-        //    unsigned int amin=args[i].lrmin*sz;
-        //    unsigned int bmin=amin/nDoublePerBloc;
-        //    unsigned int amax=args[i].lrmax*sz;
-        //    unsigned int bmax=amax/nDoublePerBloc;
-        //    args[i].numanode=numa_allocate_nodemask();
-        //    printf("thread %d allowed on node %d\n", i, bmax);
-        //    args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmax);
-        //    if(bmin!=bmax)
-        //    {
-        //        printf("thread %d allowed on node %d\n", i, bmin);
-        //        args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmin);
-        //    }
-        //}
+        if(numa)
+        {
+            unsigned int amin=args[i].lrmin*sz;
+            unsigned int bmin=amin/nDoublePerBloc;
+            unsigned int amax=args[i].lrmax*sz;
+            unsigned int bmax=amax/nDoublePerBloc;
+            args[i].numanode=numa_allocate_nodemask();
+            printf("thread %d allowed on node %d\n", i, bmax);
+            args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmax);
+            if(bmin!=bmax)
+            {
+                printf("thread %d allowed on node %d\n", i, bmin);
+                args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmin);
+            }
+        }
         printf("th %d vbloc %d hbloc %d, node: oups, bpn %d\n", i+1, curvbloc, curhbloc,
                 blocsPerNodes);
 
