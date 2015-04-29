@@ -17,6 +17,13 @@
 #define PAR_MODULO 2
 #define PAR_BLOC 3
 
+//#define PAGE_SHIFT 12
+//#define PAGE_SIZE (1UL << PAGE_SHIFT)
+//#define PAGE_MASK (~(PAGE_SIZE-1))
+//#define PAGE_ADDR(addr) ((void*)(((unsigned long)addr)&PAGE_MASK))
+#define PAGE_ADDR(addr) (addr)
+
+
 double *A,*B,*C,*D, *BT;
 unsigned int  vsplits=0, hsplits=0, numa=0;
 int Nthreads=1;
@@ -27,9 +34,11 @@ typedef struct th_arg_t
     void *mat;
     unsigned int lrmin, lrmax, colrmin, colrmax;
     int tid;
-    struct bitmask* numanode;
+    //struct bitmask* numanode;
+    int numanode;
 }*th_args;
 th_args args;
+pthread_barrier_t init_bar;
 
 
 void usage(char *s)
@@ -132,14 +141,12 @@ void do_malloc(int numa)
 
 void do_init_random(void)
 {
-    for(unsigned int i=0;i<sz;i++)
+    printf("Global init from %d to %lu\n", 0, sz*sz);
+    for(unsigned int i=0;i<sz*sz; i++)
     {
-        for(unsigned int j=0;j<sz;j++)
-        {
-            A[i*sz+j]=drand48();
-            B[i*sz+j]=drand48();
-            C[i*sz+j]=0;
-        }
+        A[i]=i-1;//drand48();
+        B[i]=3*i;//drand48();
+        C[i]=0;
     }
 }
 
@@ -150,7 +157,7 @@ void init_matrix(long int seed)
     do_malloc(numa);
     if(!A || !B || !C )
         exit(1);
-    if(!vsplits) //Wait for the numa placement before actually init if vsplits are defined
+    if(!numa && !vsplits) //Wait for the numa placement before actually init if vsplits are defined
         do_init_random();
 }
 
@@ -191,25 +198,35 @@ void do_mult_trans(double *Res)
 
 void *do_mult_par_bloc_thread(void *arg)
 {
+    unsigned int lr, cr, k;
     th_args args=(th_args)arg;
     //double *Res=args->mat;
-    printf("thread %d alive  pid %d tid %ld  on node \n", args->tid+1, getpid(), syscall(SYS_gettid) );
+    printf("thread %d alive  pid %d tid %ld  on node %d \n", args->tid+1, getpid(), syscall(SYS_gettid), args->numanode);
     //Bind to the good node
     if(numa)
     {
-        numa_run_on_node_mask(args->numanode);
-        /* numa_free_nodemask(args->numanode); */
+        //numa_run_on_node(args->numanode);
+        //Init data
+        if((unsigned )args->tid==args->numanode*numa+1) // First thread on node
+        {
+            unsigned int nDoublePerBloc=sz*sz/numa;
+            printf("tid %d first of node %u initializing from %u to %u\n", args->tid,
+                    args->numanode, args->numanode*nDoublePerBloc,(args->numanode+1)*nDoublePerBloc);
+            for(unsigned int i=args->numanode*nDoublePerBloc;i<(args->numanode+1)*nDoublePerBloc; ++i)
+            {
+                A[i]=i-1;//drand48();
+                B[i]=3*i;//drand48();
+                C[i]=0;
+            }
+        }
+        pthread_barrier_wait(&init_bar);
     }
 
-    /* printf("Working on %p from [%d][%d] to [%d][%d]\n", Res, args->lrmin, */
-    /* args->colrmin, args->lrmax, args->colrmax); */
-    for(unsigned int lr=args->lrmin; lr<args->lrmax;lr++)
+    for(lr=args->lrmin; lr<args->lrmax;lr++)
     {
-        for(unsigned int k=0;k<sz;k++)
+        for(k=0;k<sz;k++)
         {
-            //         printf("Thread %d computing R[%d][%d]+=A[%d][k]*B[k][%d]\n",
-            //                 args->tid, lr,cr,lr,cr);
-            for(unsigned int cr=args->colrmin; cr<args->colrmax;cr++)
+            for(cr=args->colrmin; cr<args->colrmax;cr++)
             {
                 /* Tr: Res[lr*sz+cr]+=A[lr*sz+k]*BT[cr*sz+k]; */
                 //Res[lr*sz+cr]+=A[lr*sz+k]*B[k*sz+cr];
@@ -236,6 +253,7 @@ void do_mult_par_bloc(double *Res)
 {
     /* do_transpose(); */
     threads=malloc(sizeof(pthread_t)*Nthreads);
+    pthread_barrier_init(&init_bar, NULL, Nthreads);
     void *res;
     for(unsigned int i=0;i<sz*sz;i++)
     {
@@ -247,20 +265,16 @@ void do_mult_par_bloc(double *Res)
     //Do the splits
     unsigned int hblocsz=sz/(hsplits+1), curhbloc=0;
     unsigned int vblocsz=sz/(vsplits+1), curvbloc=0;
-    /* printf("vblocsz: %u hblocsz %u\n", vblocsz, hblocsz); */
-    /* size_t totalvblocsz=sz*sz/(vsplits+1); */
-    unsigned int blocsPerNodes=0;
     unsigned int nDoublePerBloc;
 
     if(numa)
     {
         nDoublePerBloc=sz*sz/numa;
-        blocsPerNodes=(vsplits+1)/numa; // 6 splits, numa 2 => 3 blocs per nodes
         for(unsigned int node=0; node< numa;++node)
         {
             //sz*sz/numa => nombre de doubles par bloc
-            numa_tonode_memory(A+(node+nDoublePerBloc), nDoublePerBloc,node);
-            numa_tonode_memory(C+(node+nDoublePerBloc), nDoublePerBloc,node);
+            numa_tonode_memory(PAGE_ADDR(A+(node*nDoublePerBloc)), nDoublePerBloc*sizeof(double),node);
+            numa_tonode_memory(PAGE_ADDR(C+(node*nDoublePerBloc)), nDoublePerBloc*sizeof(double),node);
         }
     }
     for(int i=0;i<Nthreads;i++)
@@ -274,21 +288,8 @@ void do_mult_par_bloc(double *Res)
         //Compute numa node
         if(numa)
         {
-            unsigned int amin=args[i].lrmin*sz;
-            unsigned int bmin=amin/nDoublePerBloc;
-            unsigned int amax=args[i].lrmax*sz;
-            unsigned int bmax=amax/nDoublePerBloc;
-            args[i].numanode=numa_allocate_nodemask();
-            printf("thread %d allowed on node %d\n", i, bmax);
-            args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmax);
-            if(bmin!=bmax)
-            {
-                printf("thread %d allowed on node %d\n", i, bmin);
-                args[i].numanode=numa_bitmask_setbit(args[i].numanode, bmin);
-            }
+            args[i].numanode=curvbloc/numa;
         }
-        printf("th %d vbloc %d hbloc %d, node: oups, bpn %d\n", i+1, curvbloc, curhbloc,
-                blocsPerNodes);
 
         //Compute on witch bloc will be the next thread
         if(curvbloc==vsplits)
@@ -301,7 +302,8 @@ void do_mult_par_bloc(double *Res)
             ++curvbloc;
         }
     }
-    do_init_random();
+    if(!numa)
+        do_init_random();
     //Start all threads
     for(int i=0; i< Nthreads;i++)
     {
@@ -322,6 +324,23 @@ void* do_mult_par_modulo_thread(void *arg)
     printf("thread %d alive  pid %d tid %ld !\n", tid+1, getpid(), syscall(SYS_gettid));
     //Very unefficient parallel matrix multplication
     unsigned int ligr=0, colr=tid;
+
+    if(numa)
+    {
+        while(ligr*sz+colr<sz*sz)
+        {
+            A[ligr*sz+colr]=drand48();
+            B[ligr*sz+colr]=drand48();
+            C[ligr*sz+colr]=0;
+            colr+=Nthreads;
+            if(colr>=sz)
+            {
+                ligr++;
+                colr=tid;
+            }
+        }
+    }
+    ligr=0, colr=tid;
     while(ligr*sz+colr<sz*sz)
     {
         for(unsigned int k=0;k<sz;k++)

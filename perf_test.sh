@@ -4,15 +4,15 @@ CMDLINE="$0 $@"
 EXP_NAME=$(basename $0 .sh)
 OUTPUT="exp.log"
 OWNER=dbeniamine
-RUN=30
+RUN=15
 declare -A TARGET
-#CONFIGS=('base' 'kmaf' 'Tabarnac' 'numabalance')
-CONFIGS=('Tabarnac' 'kmaf')
-TARGET=([base]="./matrix" [kmaf]="./matrix.x" [Tabarnac]="./matrix"\
+CONFIGS=('base' 'Tabarnac' 'numabalance' 'interleave')
+TARGET=([base]="./matrix" [interleave]="numactl -i all ./matrix" [Tabarnac]="./matrix"\
     [numabalance]="./matrix")
-ALGOS=("par_bloc" "par_modulo")
-SIZE=4096
-SEED=42
+#ALGOS=("par_bloc" "par_modulo")
+ALGOS=("par_bloc")
+SIZE=8192
+SEED=1557
 THREADS=64
 ARGS="-S $SIZE -s $SEED -n $THREADS"
 declare -A  ARGS_SUP
@@ -119,17 +119,22 @@ do
         #Actual experiment
         for conf in ${CONFIGS[@]}
         do
-        # set -x
-	if [ $conf == "numabalance" ]
-	then
-		sysctl kernel.numa_balancing=1
-	else
-		sysctl kernel.numa_balancing=0
-	fi
-        ${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]} \
-		> $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
-        # set +x
-        testAndExitOnError "run number $run"
+            # set -x
+	    if [ $algo == "par_modulo" ] && [ $conf != "interleave" ]
+	    then
+		    continue
+	    fi
+            if [ $conf == "numabalance" ]
+	        then
+	        	sysctl kernel.numa_balancing=1
+	        else
+	        	sysctl kernel.numa_balancing=0
+	    fi
+	    set -x
+            ${TARGET[$conf]} -a $algo $ARGS ${ARGS_SUP[$conf]} \
+		    > $LOGDIR/$conf.log 2> $LOGDIR/$conf.err
+            set +x
+            testAndExitOnError "run number $run"
         done
     done
 done
